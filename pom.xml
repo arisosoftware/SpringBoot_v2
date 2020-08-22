@@ -70,6 +70,12 @@
 			<groupId>mysql</groupId>
 			<artifactId>mysql-connector-java</artifactId>
 		</dependency> 
+<!-- https://mvnrepository.com/artifact/cn.songxinqiang/com.baidu.ueditor -->
+<dependency>
+    <groupId>cn.songxinqiang</groupId>
+    <artifactId>com.baidu.ueditor</artifactId>
+    <version>1.1.2-edit-1.0</version>
+</dependency>
 
 		<!-- mysql驱动8.0
 		 <dependency> 
@@ -190,13 +196,7 @@
 			<artifactId>json</artifactId>
 			<version>20180813</version>
 		</dependency>
-		<dependency>
-			 <groupId>ueditor</groupId>
-			 <artifactId>1.4.3</artifactId>
-			<version>1.8</version>
-			<scope>system</scope>
-			<systemPath>${basedir}/lib/ueditor-1.1.2.jar</systemPath>
-		</dependency>
+ 
 		<!--quartz依赖-->
 		<dependency>
 			<groupId>org.quartz-scheduler</groupId>
