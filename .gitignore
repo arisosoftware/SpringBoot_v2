@@ -1,0 +1,67 @@
+*.class
+**/target
+**/webapp/userfiles
+**/WEB-INF/classes
+**/logs/log*.log
+
+.classpath
+.project
+
+.idea
+*.ipr
+*.iml
+*.iws
+*.lic
+rebel.xml
+/.factorypath
+/.springBeans
+
+
+
+
+# Compiled class file
+*.class
+
+# Log file
+*.log
+
+# BlueJ files
+*.ctxt
+
+# Mobile Tools for Java (J2ME)
+.mtj.tmp/
+
+# Package Files #
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+hs_err_pid*
+
+
+
+
+
+*.iml
+.vuepress
+.classpath
+.factorypath
+./**/target/*
+docs/node_modules
+docs/*.log
+docs/.vuepress/dist
+**/target/*
+*.project
+*.classpath
+*.factorypath
+*/.settings/*
+.settings/*
+.vscode/*
+.idea/*
+log/*
+.DS_Store
