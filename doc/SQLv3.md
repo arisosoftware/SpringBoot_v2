@@ -597,4 +597,144 @@ After the deletions, the #finalist temporary table is dropped.
 This solution ensures that when we encounter a CreditHistoryID that doesn't meet the conditions (i.e., its related records aren't in the finalist), we mark all records for that CreditID as "out" and replace it with the next oldest valid CreditHistoryID. We then delete all related records only for valid CreditID groups, ensuring that everything related to the valid credit group is deleted as per your requirement.
 
 ChatGPT can make mistakes. Check important info.
-?
+Great! Based on your updated requirements, here's how we can adjust the logic.
+
+### **Changes to be made:**
+1. **Mark all related records for a `CreditID` with `IsOut = 1`** if the `CreditHistoryID` does not meet the condition.
+2. **Ensure that when checking the `#finalist` table**, only records with `IsOut = 0` are processed.
+3. **After marking a record as "out"** (i.e., setting `IsOut = 1`), we need to continue with the next valid `CreditHistoryID` that hasn't been marked as "out."
+
+### **Step-by-Step Breakdown:**
+
+1. **Mark Related Records with `IsOut = 1`:** 
+    - For each `CreditHistoryID` that fails the condition (i.e., related records are not in the finalist), we will update all records that belong to the same `CreditID` to mark them with `IsOut = 1`.
+    
+2. **Only Process Records with `IsOut = 0`:** 
+    - While iterating through `#finalist`, we will only consider those records where `IsOut = 0`.
+
+3. **Find and Replace Oldest Record in Case of Removal:**
+    - After marking a record as "out," we will find the next oldest record for the same `CreditID` that has `IsOut = 0` and replace it.
+
+### **Updated Solution:**
+
+1. Add an `IsOut` column to the `#finalist` table to track which records are excluded.
+2. Update the cursor logic to handle marking records as "out" and only processing valid records (`IsOut = 0`).
+
+### **T-SQL Code:**
+
+```sql
+-- Step 1: Create the #finalist table with IsOut column to track records that are marked out
+CREATE TABLE #finalist (
+    CreditHistoryID INT PRIMARY KEY,
+    CreditID INT,
+    WorkflowDate DATETIME,
+    IsOut BIT DEFAULT 0  -- Default is 0 (valid), 1 means excluded (out)
+);
+
+-- Step 2: Populate #finalist with the oldest 50 cancelled CreditHistory records
+INSERT INTO #finalist (CreditHistoryID, CreditID, WorkflowDate)
+SELECT TOP 50 
+    ch.CreditHistoryID,
+    ch.CreditID,
+    ch.WorkflowDate
+FROM CreditHistory ch
+WHERE ch.WorkflowStatus = 'cancelled'
+ORDER BY ch.WorkflowDate ASC;
+
+-- Step 3: Declare the cursor to iterate through #finalist and check conditions
+DECLARE @CreditHistoryID INT, @CreditID INT;
+
+DECLARE finalist_cursor CURSOR FOR
+SELECT CreditHistoryID, CreditID 
+FROM #finalist
+WHERE IsOut = 0;  -- Only process records that are not marked as "out"
+
+OPEN finalist_cursor;
+FETCH NEXT FROM finalist_cursor INTO @CreditHistoryID, @CreditID;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    -- Step 4a: Check if all related CreditHistory records for the same CreditID are in the finalist
+    IF EXISTS (
+        SELECT 1
+        FROM CreditHistory ch2
+        WHERE ch2.CreditID = @CreditID
+        AND ch2.CreditHistoryID NOT IN (SELECT CreditHistoryID FROM #finalist WHERE IsOut = 0)
+    )
+    BEGIN
+        -- If any related CreditHistory is NOT in #finalist, mark all records for that CreditID as "out"
+        UPDATE #finalist
+        SET IsOut = 1
+        WHERE CreditID = @CreditID;
+
+        -- Step 4b: Insert the next oldest record from CreditHistory (not yet in finalist)
+        INSERT INTO #finalist (CreditHistoryID, CreditID, WorkflowDate)
+        SELECT TOP 1 
+            ch.CreditHistoryID, 
+            ch.CreditID, 
+            ch.WorkflowDate
+        FROM CreditHistory ch
+        WHERE ch.CreditID != @CreditID  -- Ensure we don't pick records already in finalist
+          AND ch.WorkflowStatus = 'cancelled'
+          AND ch.CreditHistoryID NOT IN (SELECT CreditHistoryID FROM #finalist WHERE IsOut = 0)
+        ORDER BY ch.WorkflowDate ASC;
+
+        -- Fetch the previous record (the newly inserted record) for re-checking
+        FETCH PRIOR FROM finalist_cursor INTO @CreditHistoryID, @CreditID;
+    END
+    ELSE
+    BEGIN
+        -- If all related CreditHistory records are in finalist, move to the next record
+        FETCH NEXT FROM finalist_cursor INTO @CreditHistoryID, @CreditID;
+    END
+END;
+
+-- Step 5: Cleanup the cursor
+CLOSE finalist_cursor;
+DEALLOCATE finalist_cursor;
+
+-- Step 6: Delete all related records for the CreditID in #finalist
+
+-- 6a: Delete from Credit_Counterparty (links CreditHistory to CounterpartyHistory)
+DELETE FROM Credit_Counterparty
+WHERE CreditHistoryID IN (SELECT CreditHistoryID FROM #finalist WHERE IsOut = 0);
+
+-- 6b: Delete related CounterpartyHistory records for each CreditHistory in the finalist
+DELETE FROM CounterpartyHistory
+WHERE CounterpartyHistoryID IN (
+    SELECT CounterpartyHistoryID 
+    FROM Credit_Counterparty cc
+    JOIN #finalist f ON cc.CreditHistoryID = f.CreditHistoryID
+    WHERE f.IsOut = 0
+);
+
+-- 6c: Delete from CreditHistory for the CreditIDs in finalist
+DELETE FROM CreditHistory
+WHERE CreditHistoryID IN (SELECT CreditHistoryID FROM #finalist WHERE IsOut = 0);
+
+-- Step 7: Final Cleanup
+DROP TABLE #finalist;  -- Remove the temporary table
+```
+
+### **Explanation of Changes:**
+
+1. **`IsOut` Column**: 
+   - A new `IsOut` column is added to the `#finalist` table to track records that are marked as "out." Initially, all records are set to `IsOut = 0`, indicating they are valid. Once a record is found to have related `CreditHistory` records not in the finalist, all records related to that `CreditID` are marked with `IsOut = 1`.
+
+2. **Cursor Logic Update**:
+   - The cursor now only processes records where `IsOut = 0`, ensuring that we are only dealing with valid records.
+   - If a `CreditHistoryID` doesn't meet the condition (i.e., has related `CreditHistory` records not in the finalist), it is marked as `IsOut = 1`, and the next oldest record is added to the `#finalist`.
+   - The `FETCH PRIOR` statement ensures we go back and recheck the newly added record.
+
+3. **Mark Related Records as "Out"**:
+   - When a `CreditHistoryID` does not meet the condition, all records for the same `CreditID` are marked with `IsOut = 1`. This prevents any related records from being processed in subsequent iterations.
+
+4. **Delete Process**:
+   - After finalizing the `#finalist`, we delete all related records from `Credit_Counterparty`, `CounterpartyHistory`, and `CreditHistory` where `IsOut = 0`. This ensures that only records which remain valid are deleted, and those marked as "out" are excluded from the deletion process.
+
+5. **Final Cleanup**:
+   - After the deletions, the `#finalist` temporary table is dropped.
+
+### **Conclusion:**
+
+This solution ensures that when we encounter a `CreditHistoryID` that doesn't meet the conditions (i.e., its related records aren't in the finalist), we mark **all records for that `CreditID` as "out"** and replace it with the next oldest valid `CreditHistoryID`. We then delete all related records only for valid `CreditID` groups, ensuring that everything related to the valid credit group is deleted as per your requirement.
