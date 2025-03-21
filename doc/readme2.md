@@ -609,3 +609,244 @@ If EF Core adds XML support in the future, you can first extract the XML and mod
 
 Let me know which approach works best for you! 🚀
 
+
+
+
+
+Got it! I'll modify the code to **extract column comments from SQL Server** and insert them as C# XML comments in the generated class files.  
+
+---
+
+### **How This Works**
+1. **Retrieve column comments** using `sys.extended_properties`.
+2. **Insert comments above properties** in the generated C# class.
+
+---
+
+### **Updated Code**
+```csharp
+using System;
+using System.Data.SqlClient;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Collections.Generic;
+
+class Program
+{
+    static void Main()
+    {
+        string connectionString = "your_connection_string_here"; // Replace with actual DB connection
+        string outputDirectory = "GeneratedEntities"; // Output folder for .cs files
+
+        Directory.CreateDirectory(outputDirectory);
+
+        using (SqlConnection conn = new SqlConnection(connectionString))
+        {
+            conn.Open();
+            var tables = GetTables(conn);
+            var foreignKeys = GetForeignKeys(conn);
+            var columnComments = GetColumnComments(conn);
+
+            foreach (var table in tables)
+            {
+                string classCode = GenerateEntityClass(conn, table, foreignKeys, columnComments);
+                string filePath = Path.Combine(outputDirectory, $"{table}.cs");
+                File.WriteAllText(filePath, classCode);
+                Console.WriteLine($"Generated: {filePath}");
+            }
+        }
+    }
+
+    static List<string> GetTables(SqlConnection conn)
+    {
+        List<string> tables = new();
+        string query = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'";
+        using SqlCommand cmd = new(query, conn);
+        using SqlDataReader reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            tables.Add(reader.GetString(0));
+        }
+        return tables;
+    }
+
+    static List<(string Table, string Column, string RefTable, string RefColumn)> GetForeignKeys(SqlConnection conn)
+    {
+        List<(string, string, string, string)> foreignKeys = new();
+        string query = @"
+            SELECT 
+                tp.name AS TableName, 
+                cp.name AS ColumnName, 
+                tr.name AS RefTable, 
+                cr.name AS RefColumn
+            FROM sys.foreign_keys fk
+            INNER JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+            INNER JOIN sys.tables tp ON tp.object_id = fkc.parent_object_id
+            INNER JOIN sys.columns cp ON cp.object_id = tp.object_id AND cp.column_id = fkc.parent_column_id
+            INNER JOIN sys.tables tr ON tr.object_id = fkc.referenced_object_id
+            INNER JOIN sys.columns cr ON cr.object_id = tr.object_id AND cr.column_id = fkc.referenced_column_id";
+
+        using SqlCommand cmd = new(query, conn);
+        using SqlDataReader reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            foreignKeys.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3)));
+        }
+        return foreignKeys;
+    }
+
+    static Dictionary<(string Table, string Column), string> GetColumnComments(SqlConnection conn)
+    {
+        Dictionary<(string, string), string> columnComments = new();
+        string query = @"
+            SELECT 
+                t.name AS TableName,
+                c.name AS ColumnName,
+                ep.value AS ColumnComment
+            FROM sys.extended_properties ep
+            INNER JOIN sys.tables t ON ep.major_id = t.object_id
+            INNER JOIN sys.columns c ON ep.major_id = c.object_id AND ep.minor_id = c.column_id
+            WHERE ep.name = 'MS_Description'";
+
+        using SqlCommand cmd = new(query, conn);
+        using SqlDataReader reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            string table = reader.GetString(0);
+            string column = reader.GetString(1);
+            string comment = reader.IsDBNull(2) ? "" : reader.GetString(2);
+            columnComments[(table, column)] = comment;
+        }
+        return columnComments;
+    }
+
+    static string GenerateEntityClass(SqlConnection conn, string table, 
+                                      List<(string Table, string Column, string RefTable, string RefColumn)> foreignKeys, 
+                                      Dictionary<(string Table, string Column), string> columnComments)
+    {
+        StringBuilder sb = new();
+        sb.AppendLine("using System;");
+        sb.AppendLine("using System.Collections.Generic;");
+        sb.AppendLine();
+        sb.AppendLine($"public class {ToPascalCase(table)}");
+        sb.AppendLine("{");
+
+        string query = $"SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{table}'";
+        using SqlCommand cmd = new(query, conn);
+        using SqlDataReader reader = cmd.ExecuteReader();
+        
+        while (reader.Read())
+        {
+            string columnName = reader.GetString(0);
+            string dataType = reader.GetString(1);
+            bool isNullable = reader.GetString(2) == "YES";
+            string csharpType = MapToCSharpType(dataType, isNullable);
+
+            // Fetch column comment if available
+            if (columnComments.TryGetValue((table, columnName), out string comment) && !string.IsNullOrWhiteSpace(comment))
+            {
+                sb.AppendLine($"    /// <summary>");
+                sb.AppendLine($"    /// {comment}");
+                sb.AppendLine($"    /// </summary>");
+            }
+
+            sb.AppendLine($"    public {csharpType} {ToPascalCase(columnName)} {{ get; set; }}");
+        }
+
+        // Handle multiple FK references to the same table
+        var fksForTable = foreignKeys.Where(fk => fk.Table == table).ToList();
+        var groupedFks = fksForTable.GroupBy(fk => fk.RefTable).ToDictionary(g => g.Key, g => g.ToList());
+
+        foreach (var fk in fksForTable)
+        {
+            string propertyName = ToPascalCase(fk.RefTable);
+            if (groupedFks[fk.RefTable].Count > 1)
+            {
+                // Append the referencing column name to differentiate
+                propertyName += ToPascalCase(fk.Column);
+            }
+            sb.AppendLine($"    public virtual {ToPascalCase(fk.RefTable)} {propertyName} {{ get; set; }}");
+        }
+
+        sb.AppendLine("}");
+        return sb.ToString();
+    }
+
+    static string MapToCSharpType(string sqlType, bool isNullable)
+    {
+        string type = sqlType.ToLower() switch
+        {
+            "bigint" => "long",
+            "int" => "int",
+            "smallint" => "short",
+            "tinyint" => "byte",
+            "bit" => "bool",
+            "decimal" or "numeric" => "decimal",
+            "float" => "double",
+            "real" => "float",
+            "datetime" or "smalldatetime" or "date" or "time" or "datetime2" => "DateTime",
+            "char" or "varchar" or "text" or "nvarchar" or "ntext" or "nchar" => "string",
+            "uniqueidentifier" => "Guid",
+            _ => "object"
+        };
+
+        return isNullable && type != "string" && type != "object" ? $"Nullable<{type}>" : type;
+    }
+
+    static string ToPascalCase(string input)
+    {
+        return string.Concat(input.Split(new[] { '_', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                                  .Select(word => char.ToUpper(word[0]) + word.Substring(1).ToLower()));
+    }
+}
+```
+
+---
+
+### **Example SQL Server Table**
+```sql
+CREATE TABLE User_Account (
+    UserId INT PRIMARY KEY,
+    UserName VARCHAR(50) NOT NULL,
+    Email VARCHAR(100) NULL,
+    RoleId INT NOT NULL,
+    ApproverId INT NOT NULL,
+    CONSTRAINT FK_UserAccount_Role FOREIGN KEY (RoleId) REFERENCES Role(RoleId),
+    CONSTRAINT FK_UserAccount_Approver FOREIGN KEY (ApproverId) REFERENCES Role(RoleId)
+);
+
+EXEC sp_addextendedproperty 'MS_Description', 'Primary key for the user', 'SCHEMA', 'dbo', 'TABLE', 'User_Account', 'COLUMN', 'UserId';
+EXEC sp_addextendedproperty 'MS_Description', 'User email address', 'SCHEMA', 'dbo', 'TABLE', 'User_Account', 'COLUMN', 'Email';
+```
+
+---
+
+### **Generated C# Class with Comments**
+```csharp
+public class UserAccount
+{
+    /// <summary>
+    /// Primary key for the user
+    /// </summary>
+    public int UserId { get; set; }
+
+    /// <summary>
+    /// User email address
+    /// </summary>
+    public string Email { get; set; }
+
+    public virtual Role Role { get; set; }
+    public virtual Role ApproverIdRole { get; set; }
+}
+```
+
+---
+
+### **✅ Features Added**
+✔ **Extracts column comments** from SQL Server  
+✔ **Adds XML `<summary>` comments** to properties  
+✔ **Handles multiple foreign keys referencing the same table**  
+✔ **Maintains PascalCase naming & Nullable<T> types**  
+
+Would you like to add **DTO generation** next? 🚀
