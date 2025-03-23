@@ -185,3 +185,98 @@ public class CreditOrderItem
 4. **不会错误生成自身 FK**
 
 💡 **这样代码更加清晰、可读性更好，符合 EF 代码风格！** 🚀
+
+
+好的，让我们实现 `GetParentTable` 和 `GetChildTables` 方法，以便根据提供的表名和模式获取相关的外键关系。
+
+## **🛠 方法实现**
+
+### **1️⃣ `GetParentTable` 方法**
+这个方法将检查给定表的外键关系，以找到指向该表的主表。
+
+```csharp
+static ForeignKeyInfo GetParentTable(string schema, string table, List<ForeignKeyInfo> foreignKeys)
+{
+    // 查找外键，检查当前表是否为外键的从表（子表）
+    return foreignKeys.FirstOrDefault(fk => fk.TableSchema == schema && fk.Table == table);
+}
+```
+
+### **2️⃣ `GetChildTables` 方法**
+这个方法将查找所有指向给定表的子表。
+
+```csharp
+static List<ForeignKeyInfo> GetChildTables(string schema, string table, List<ForeignKeyInfo> foreignKeys)
+{
+    // 获取所有指向当前表的外键（主表）
+    return foreignKeys
+        .Where(fk => fk.RefSchema == schema && fk.RefTable == table)
+        .ToList();
+}
+```
+
+## **📝 完整代码示例**
+
+在你的代码生成器中，包含这两个方法的示例：
+
+```csharp
+static ForeignKeyInfo GetParentTable(string schema, string table, List<ForeignKeyInfo> foreignKeys)
+{
+    // 查找外键，检查当前表是否为外键的从表（子表）
+    return foreignKeys.FirstOrDefault(fk => fk.TableSchema == schema && fk.Table == table);
+}
+
+static List<ForeignKeyInfo> GetChildTables(string schema, string table, List<ForeignKeyInfo> foreignKeys)
+{
+    // 获取所有指向当前表的外键（主表）
+    return foreignKeys
+        .Where(fk => fk.RefSchema == schema && fk.RefTable == table)
+        .ToList();
+}
+```
+
+## **🔍 使用示例**
+
+### **在代码生成时**
+```csharp
+void GenerateEntityClass(string schema, string table, List<ForeignKeyInfo> foreignKeys)
+{
+    Console.WriteLine($"public class {schema}{table}");
+    Console.WriteLine("{");
+
+    // 获取当前表的主表（如果当前表是子表）
+    ForeignKeyInfo parentTable = GetParentTable(schema, table, foreignKeys);
+    if (parentTable != null)
+    {
+        // 生成主表的外键属性
+        Console.WriteLine($"    public int {parentTable.Column} {{ get; set; }}");
+        Console.WriteLine($"    public virtual {parentTable.RefTable} {parentTable.RefTable} {{ get; set; }}");
+    }
+
+    // 获取所有引用当前表的子表
+    List<ForeignKeyInfo> childTables = GetChildTables(schema, table, foreignKeys);
+    foreach (var child in childTables)
+    {
+        if (!child.IsUnique)
+        {
+            Console.WriteLine($"    public virtual ICollection<{child.Table}> {child.Table}s {{ get; set; }} = new List<{child.Table}>();");
+        }
+        else
+        {
+            // 处理一对一的情况
+            Console.WriteLine($"    public virtual {child.Table} {child.Column} {{ get; set; }}");
+        }
+    }
+
+    Console.WriteLine("}");
+}
+```
+
+## **✅ 结论**
+- **`GetParentTable`**：找到当前表的主表。
+- **`GetChildTables`**：找到所有引用当前表的子表。
+- **代码生成逻辑可以根据表关系自动生成外键属性**。
+
+这样，你的 **C# 代码** 就能保持与数据库的关系一致性！🚀
+
+如果有任何进一步的修改或需求，请随时告诉我！
