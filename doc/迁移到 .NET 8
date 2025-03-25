@@ -1,0 +1,184 @@
+从 .NET Framework 4.8 迁移到 .NET 8（.NET Core 8）的主要步骤如下：
+
+---
+
+## **1. 评估当前项目**
+在迁移前，检查项目的依赖项和数据库访问方式：
+- **数据库访问**：
+  - 是否使用 `System.Data.SqlClient`（建议迁移到 `Microsoft.Data.SqlClient`）。
+  - 是否使用 Entity Framework 6（建议迁移到 EF Core）。
+  - 是否使用 ADO.NET、Dapper 等（这些可以继续使用）。
+- **第三方库**：
+  - 检查 `.csproj` 的 `packages.config` 或 `NuGet` 依赖项，确保它们支持 .NET 8。
+- **.NET API**：
+  - 使用 [`Portability Analyzer`](https://github.com/microsoft/dotnet-apiport) 工具分析哪些 API 需要更改。
+
+---
+
+## **2. 创建 .NET 8 Console 项目**
+在 .NET 8 中，控制台项目应使用 **SDK 格式 (`.csproj`)**：
+```bash
+dotnet new console -o MyDotNetCoreApp
+cd MyDotNetCoreApp
+```
+
+然后，打开 `MyDotNetCoreApp.csproj`，它的结构类似：
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+
+</Project>
+```
+
+---
+
+## **3. 迁移数据库访问**
+### **(1) 迁移 `System.Data.SqlClient`**
+.NET 8 推荐使用 `Microsoft.Data.SqlClient`：
+```csharp
+using System;
+using System.Data;
+using Microsoft.Data.SqlClient;
+
+class Program
+{
+    static void Main()
+    {
+        string connectionString = "Server=your_server;Database=your_db;User Id=your_user;Password=your_password;";
+        using var connection = new SqlConnection(connectionString);
+        connection.Open();
+        Console.WriteLine("Connected to database.");
+    }
+}
+```
+**安装 NuGet 包**：
+```bash
+dotnet add package Microsoft.Data.SqlClient
+```
+
+### **(2) 迁移 Entity Framework**
+如果你使用 **Entity Framework 6**，建议升级到 **EF Core**：
+```bash
+dotnet add package Microsoft.EntityFrameworkCore
+dotnet add package Microsoft.EntityFrameworkCore.SqlServer
+```
+
+修改 `DbContext` 代码：
+```csharp
+using Microsoft.EntityFrameworkCore;
+
+public class MyDbContext : DbContext
+{
+    public DbSet<User> Users { get; set; }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder options)
+    {
+        options.UseSqlServer("Server=your_server;Database=your_db;User Id=your_user;Password=your_password;");
+    }
+}
+
+public class User
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+}
+```
+
+然后运行：
+```bash
+dotnet ef migrations add InitialCreate
+dotnet ef database update
+```
+
+### **(3) 继续使用 Dapper**
+Dapper 仍然兼容 .NET 8：
+```bash
+dotnet add package Dapper
+```
+示例代码：
+```csharp
+using System;
+using System.Data;
+using Microsoft.Data.SqlClient;
+using Dapper;
+
+class Program
+{
+    static void Main()
+    {
+        using var connection = new SqlConnection("Server=your_server;Database=your_db;User Id=your_user;Password=your_password;");
+        var users = connection.Query<User>("SELECT Id, Name FROM Users");
+        foreach (var user in users)
+        {
+            Console.WriteLine($"ID: {user.Id}, Name: {user.Name}");
+        }
+    }
+}
+
+public class User
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+}
+```
+
+---
+
+## **4. 迁移 `app.config` 配置**
+.NET 8 推荐使用 `appsettings.json`：
+1. **安装 `Microsoft.Extensions.Configuration`**：
+```bash
+dotnet add package Microsoft.Extensions.Configuration.Json
+```
+2. **创建 `appsettings.json`**：
+```json
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=your_server;Database=your_db;User Id=your_user;Password=your_password;"
+  }
+}
+```
+3. **读取配置**：
+```csharp
+using System;
+using Microsoft.Extensions.Configuration;
+
+class Program
+{
+    static void Main()
+    {
+        var config = new ConfigurationBuilder()
+            .AddJsonFile("appsettings.json")
+            .Build();
+        
+        string connectionString = config.GetConnectionString("DefaultConnection");
+        Console.WriteLine($"Connection String: {connectionString}");
+    }
+}
+```
+
+---
+
+## **5. 运行 .NET 8 项目**
+```bash
+dotnet run
+```
+如果需要发布：
+```bash
+dotnet publish -c Release -r win-x64 --self-contained false
+```
+
+---
+
+## **总结**
+✔ 创建 .NET 8 控制台项目  
+✔ 迁移 `System.Data.SqlClient` → `Microsoft.Data.SqlClient`  
+✔ 如果使用 EF6，建议升级到 EF Core  
+✔ Dapper 仍然适用  
+✔ `app.config` 迁移到 `appsettings.json`  
+
+如果你的项目比较复杂，可以逐步拆分、测试和调整。
