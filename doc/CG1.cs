@@ -30,8 +30,24 @@ class Program
         if (dir == null)
             return null; // Root folder not found
 
-        // Step 2: Search downward for the target folder from the root folder
-        string targetFullPath = Path.Combine(dir.FullName, targetPath);
-        return Directory.Exists(targetFullPath) ? Path.GetFullPath(targetFullPath) : null;
+        // Step 2: Recursively search downward for the target folder structure
+        return FindSubdirectory(dir, targetPath.Split('/'));
+    }
+
+    static string? FindSubdirectory(DirectoryInfo root, string[] subDirs, int index = 0)
+    {
+        if (index >= subDirs.Length)
+            return root.FullName;
+
+        foreach (var subDir in root.GetDirectories())
+        {
+            if (subDir.Name.Equals(subDirs[index], StringComparison.OrdinalIgnoreCase))
+            {
+                string? result = FindSubdirectory(subDir, subDirs, index + 1);
+                if (result != null)
+                    return result;
+            }
+        }
+        return null;
     }
 }
